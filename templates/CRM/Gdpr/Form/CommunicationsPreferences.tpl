@@ -27,7 +27,7 @@
   {* Channels block *}
   <div class="crm-block crm-form-block crm-gdpr-comms-prefs-form-block">
     <div class="crm-section">
-      <div class="label">{ $form.enable_channels.label }</div>
+      <div class="label">{$form.enable_channels.label}</div>
       <div class="content">{$form.enable_channels.html}
       </div>
       <div class="clear"></div>
