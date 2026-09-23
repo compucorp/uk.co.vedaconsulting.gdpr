@@ -109,7 +109,7 @@ function gdpr_civicrm_alterContent(&$content, $context, $tplName, &$object) {
             var split = data.split('|');
             if( split[0] != 0 ){
             var linkHtml = '<div class="crm-content" align="right"><a href="javascript:void(0);" id="address_history_dialog_link"> Address History ('+split[0]+') </a></div>';
-            
+
             // check if we are using standard layout or contact summary layout
             if (cj('#website-block').length > 0) {
               cj(linkHtml).insertAfter('#website-block');
@@ -429,46 +429,69 @@ function gdpr_civicrm_tokens(&$tokens) {
 /**
  * implementation of hook_civicrm_tokenValues
  */
-function gdpr_civicrm_tokenValues(&$values, $cids, $job = null, $tokens = [], $context = null) {
-  if (!empty($tokens['contact']) OR !empty($tokens['CommunicationPreferences'])) {
-    /*
-    THIS CHANGE IS ONLY FOR ACTIONSCHEDULE (SEND EMAIL USING SCHEDULE REMINDER)
+function gdpr_civicrm_tokenValues(&$values, $cids, $job = NULL, $tokens = [], $context = NULL) {
+  if (empty($tokens['contact']) && empty($tokens['CommunicationPreferences'])) {
+    return;
+  }
+  $cids = (array) $cids;
 
-    we have mentioned the contact custom tokens in token hook.
-    so whenever replaceHookToken called its trying replace Category 'Contact' tokens
-    (which cause null values in template result).
+  /*
+  THIS CHANGE IS ONLY FOR ACTIONSCHEDULE (SEND EMAIL USING SCHEDULE REMINDER)
 
-    This is not happening when send email via contact summary or mailing,
-    because all other work flow to send emails are builds the contact details array
-    before replaceHookToken fired using this function CRM_Utils_Token::getTokenDetails().
+  Scheduled reminders used to invoke this hook with a sparsely populated
+  contact array, which made the legacy 'contact.*' tokens above resolve to
+  null, so the full contact details had to be loaded here.
 
-    When Action schedule send email, Contact Details get from BAO API Query
-    which doesn't return some default contact values ex: email_greetings,
-    postal greetings etc. So build the contact details array with all default values.
+  Core has done this itself since the action schedule moved to the token
+  processor - see CRM_Contact_Tokens::evaluateLegacyHookTokens(), which calls
+  getContact($contactId, ..., $getAll = TRUE) before firing this hook - and
+  CRM_Utils_Token::getTokenDetails() was removed outright in CiviCRM 6.4.
 
-    This changes is needed only when we have $tokens['contact']. Keeping this oly to sustain
-    the old token.
-    IN FUTURE or V3.0, WE CAN REMOVE THIS CHANGE ALONG WITH CONTACT CUSTOM TOKEN ABOVE.
-    */
-    $tokenValues = [];
-    $cids = isset($cids) ? $cids : [];
-    if ($context == 'CRM_Core_BAO_ActionSchedule') {
-      list($tokenValues) = CRM_Utils_Token::getTokenDetails($cids, [], FALSE, FALSE);
+  So: feature-detect rather than version-detect, and skip the (noisily
+  deprecated) call entirely whenever core has already given us the details.
+  This keeps the extension working on both 6.4+ and earlier versions.
+  */
+  $tokenValues = [];
+  if ($context == 'CRM_Core_BAO_ActionSchedule'
+    && method_exists('CRM_Utils_Token', 'getTokenDetails')
+    && !_gdpr_hasLoadedContactDetails($values, $cids)
+  ) {
+    list($tokenValues) = CRM_Utils_Token::getTokenDetails($cids, [], FALSE, FALSE);
+  }
+
+  foreach ($cids as $cid) {
+    if (!empty($tokenValues[$cid])) {
+      $values[$cid] = array_merge($values[$cid] ?? [], $tokenValues[$cid]);
     }
-    foreach ($cids as $cid) {
-      if (!empty($tokenValues[$cid])) {
-        $values[$cid] = array_merge($values[$cid], $tokenValues[$cid]);
-      }
-      $commPrefURL = CRM_Gdpr_CommunicationsPreferences_Utils::getCommPreferenceURLForContact($cid);
-      $link = sprintf("<a href='%s' target='_blank'>%s</a>",$commPrefURL, E::ts('Communication Preferences'));
-      $values[$cid]['contact.comm_pref_supporter_url'] = $commPrefURL;
-      $values[$cid]['contact.comm_pref_supporter_link'] = html_entity_decode($link);
+    $commPrefURL = CRM_Gdpr_CommunicationsPreferences_Utils::getCommPreferenceURLForContact($cid);
+    $link = sprintf("<a href='%s' target='_blank'>%s</a>",$commPrefURL, E::ts('Communication Preferences'));
+    $values[$cid]['contact.comm_pref_supporter_url'] = $commPrefURL;
+    $values[$cid]['contact.comm_pref_supporter_link'] = html_entity_decode($link);
 
-      //For Bulk Mailing
-      $values[$cid]['CommunicationPreferences.comm_pref_supporter_url'] = $commPrefURL;
-      $values[$cid]['CommunicationPreferences.comm_pref_supporter_link'] = html_entity_decode($link);
+    //For Bulk Mailing
+    $values[$cid]['CommunicationPreferences.comm_pref_supporter_url'] = $commPrefURL;
+    $values[$cid]['CommunicationPreferences.comm_pref_supporter_link'] = html_entity_decode($link);
+  }
+}
+
+/**
+ * Has core already populated the contact details for every contact?
+ *
+ * @param array $values
+ * @param array $cids
+ *
+ * @return bool
+ */
+function _gdpr_hasLoadedContactDetails(array $values, array $cids) {
+  if (empty($cids)) {
+    return TRUE;
+  }
+  foreach ($cids as $cid) {
+    if (empty($values[$cid]['display_name'])) {
+      return FALSE;
     }
   }
+  return TRUE;
 }
 
 /**
